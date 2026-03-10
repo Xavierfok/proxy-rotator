@@ -14,10 +14,10 @@ setup(
     ),
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/dataresearchtools/proxy-rotator",
+    url="https://github.com/Xavierfok/proxy-rotator",
     project_urls={
-        "Bug Tracker": "https://github.com/dataresearchtools/proxy-rotator/issues",
-        "Documentation": "https://github.com/dataresearchtools/proxy-rotator#readme",
+        "Bug Tracker": "https://github.com/Xavierfok/proxy-rotator/issues",
+        "Documentation": "https://github.com/Xavierfok/proxy-rotator#readme",
         "Proxy Tools & Guides": "https://dataresearchtools.com",
     },
     packages=find_packages(exclude=["examples", "tests"]),
