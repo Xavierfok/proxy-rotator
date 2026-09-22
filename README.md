@@ -13,14 +13,14 @@ The only dependency is `requests`.
 
 ## Install
 
-It isn't on PyPI yet, so install from GitHub:
-
 ```bash
-pip install git+https://github.com/Xavierfok/proxy-rotator.git
+pip install proxy-rotator-sg
 
 # with SOCKS5 support
-pip install "proxy-rotator[socks] @ git+https://github.com/Xavierfok/proxy-rotator.git"
+pip install "proxy-rotator-sg[socks]"
 ```
+
+The PyPI name has `-sg` on the end because PyPI won't allow `proxy-rotator` next to the existing `proxyrotator`. You still import it as `proxy_rotator`.
 
 ## Mobile proxies
 

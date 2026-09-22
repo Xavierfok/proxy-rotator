@@ -5,7 +5,7 @@ Demonstrates how to use ProxyRotator in an async context for
 high-concurrency scraping with rotating proxies.
 
 Requirements:
-    pip install aiohttp proxy-rotator
+    pip install aiohttp proxy-rotator-sg
 """
 
 import asyncio

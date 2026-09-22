@@ -4,7 +4,7 @@ from pathlib import Path
 long_description = Path("README.md").read_text(encoding="utf-8")
 
 setup(
-    name="proxy-rotator",
+    name="proxy-rotator-sg",
     version="1.1.0",
     author="Xavier Fok",
     license="MIT",
