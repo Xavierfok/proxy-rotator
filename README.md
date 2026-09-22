@@ -1,262 +1,182 @@
 # proxy-rotator
 
-[![PyPI version](https://badge.fury.io/py/proxy-rotator.svg)](https://pypi.org/project/proxy-rotator/)
+[![tests](https://github.com/Xavierfok/proxy-rotator/actions/workflows/tests.yml/badge.svg)](https://github.com/Xavierfok/proxy-rotator/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
-**Lightweight Python library for rotating proxies in web scraping projects.** Supports HTTP/HTTPS/SOCKS5 proxies with automatic rotation, health checking, and retry logic.
+Small Python library for rotating proxies in scrapers. It covers two different jobs:
 
-## Features
+1. You have a **list of proxies** and want to spread requests across them, drop the dead ones and retry on failure. That's `ProxyRotator` and `RotatingSession`.
+2. You have a **mobile proxy**: one host:port on a 4G modem, plus a URL that makes the modem redial for a new IP. That's `MobileProxy`.
 
-- **Round-robin & random rotation** -- cycle through proxies sequentially or pick one at random
-- **Automatic health checking** -- periodically test proxies and remove dead ones
-- **Configurable failure threshold** -- proxies are sidelined after N consecutive failures
-- **Thread-safe** -- safe to use across multiple threads with built-in locking
-- **Protocol support** -- works with HTTP, HTTPS, and SOCKS5 proxies
-- **Drop-in session wrapper** -- `RotatingSession` extends `requests.Session` so every request automatically uses a different proxy
-- **Async-friendly** -- easy to integrate with `aiohttp` and `httpx`
-- **Zero heavy dependencies** -- core library only requires `requests`
+The only dependency is `requests`.
 
-## Installation
+## Install
+
+It isn't on PyPI yet, so install from GitHub:
 
 ```bash
-pip install proxy-rotator
+pip install git+https://github.com/Xavierfok/proxy-rotator.git
+
+# with SOCKS5 support
+pip install "proxy-rotator[socks] @ git+https://github.com/Xavierfok/proxy-rotator.git"
 ```
 
-For SOCKS5 support:
+## Mobile proxies
 
-```bash
-pip install proxy-rotator[socks]
+With a mobile proxy the address you connect to never changes. The IP behind it changes when you hit the provider's rotation link. That trips people up in a few ways:
+
+- The modem has to redial, which takes 10 to 30 seconds, and requests sent during the redial fail.
+- Providers cap how often you can rotate. Mine allows once every 4 minutes per modem and answers `429` with a `Retry-After` header if you go faster.
+- The carrier can hand back the same IP. You only find out by checking.
+- If you send the rotation call *through* the proxy, it can die along with the connection it's resetting.
+
+`MobileProxy` waits out the cooldown, calls the link directly, then polls an IP echo service until the address actually changes.
+
+```python
+import requests
+from proxy_rotator import MobileProxy
+
+mp = MobileProxy(
+    "http://user:pass@sg.example.com:8001",       # the proxy
+    "https://provider.example.com/rotate/abc123",  # its rotation link
+    min_interval=240,                              # your provider's limit, in seconds
+)
+
+r = requests.get("https://example.com/search?q=shoes", proxies=mp.proxies, timeout=30)
+if r.status_code in (403, 429):
+    result = mp.rotate()
+    print(result.old_ip, "->", result.new_ip, "changed:", result.changed, f"{result.waited:.0f}s")
 ```
 
-## Quick Start
+`rotate()` returns a `RotationResult` with `old_ip`, `new_ip`, `changed` and `waited`. It raises `RotationError` (with `.status_code` and `.body`) when the link refuses, for example a `410` once a port has been cancelled. Pass `honour_cooldown=False` if you'd rather get the error than have it sleep.
+
+I'd rotate when a site pushes back (a 403, a 429, a captcha page), not on a timer. A mobile IP is shared with real phone users behind the carrier's NAT, so sites are slow to block one, and every rotation costs you about 20 seconds of downtime.
+
+A full script is in [`examples/mobile_proxy_example.py`](examples/mobile_proxy_example.py).
+
+What I haven't tested: the unit tests in `tests/` fake the network. I wrote `MobileProxy` against the rotation links of [Singapore Mobile Proxy](https://singaporemobileproxy.com/?utm_source=github&utm_medium=repo&utm_campaign=proxy_rotator), which I run. Any provider whose link rotates on a plain `GET` should work, but I haven't tried the others. If yours behaves differently, open an issue.
+
+## Proxy lists
 
 ```python
 from proxy_rotator import ProxyRotator
 
-proxies = [
+rotator = ProxyRotator([
     "http://user:pass@proxy1.example.com:8080",
     "http://user:pass@proxy2.example.com:8080",
     "socks5://user:pass@proxy3.example.com:1080",
-]
-
-rotator = ProxyRotator(proxies)
-
-# Round-robin rotation
-proxy = rotator.get_next()
-print(proxy)  # → http://user:pass@proxy1.example.com:8080
-
-proxy = rotator.get_next()
-print(proxy)  # → http://user:pass@proxy2.example.com:8080
-
-# Random selection
-proxy = rotator.get_random()
-```
-
-## Usage
-
-### Basic Proxy Rotation
-
-```python
-from proxy_rotator import ProxyRotator
-
-rotator = ProxyRotator([
-    "http://proxy1.example.com:8080",
-    "http://proxy2.example.com:8080",
-    "http://proxy3.example.com:8080",
 ])
 
-# Add or remove proxies at runtime
+rotator.get_next()    # round-robin
+rotator.get_random()  # random pick
+
 rotator.add_proxy("http://proxy4.example.com:8080")
 rotator.remove_proxy("http://proxy1.example.com:8080")
-
-# Check how many proxies are alive
-print(f"Active proxies: {rotator.active_count}")
+print(rotator.active_count)
 ```
 
-### Drop-in Rotating Session (requests)
+Load them from a file (one URL per line; blank lines and `#` comments are skipped):
 
-`RotatingSession` is a subclass of `requests.Session`. Every call to `.get()`, `.post()`, etc. automatically rotates to the next proxy.
+```python
+rotator = ProxyRotator.from_file("proxies.txt")
+```
+
+### RotatingSession
+
+`RotatingSession` subclasses `requests.Session`. Each request goes out through the next proxy, and a failed one is retried on a different proxy with exponential backoff.
 
 ```python
 from proxy_rotator import RotatingSession
 
 session = RotatingSession(
-    proxies=[
-        "http://proxy1.example.com:8080",
-        "http://proxy2.example.com:8080",
-    ],
-    max_retries=3,        # retry on failure with the next proxy
-    backoff_factor=0.5,   # exponential backoff between retries
+    proxies=["http://proxy1.example.com:8080", "http://proxy2.example.com:8080"],
+    max_retries=3,
+    backoff_factor=0.5,
 )
-
-# Every request uses a different proxy -- no extra code needed
-response = session.get("https://httpbin.org/ip")
-print(response.json())
-
-response = session.get("https://httpbin.org/ip")
-print(response.json())
+print(session.get("https://httpbin.org/ip").json())
 ```
 
-### Using with httpx
+It's thread-safe, so one session can be shared across a `ThreadPoolExecutor`.
+
+### Health checks
+
+```python
+rotator = ProxyRotator(
+    proxies=["http://proxy1.example.com:8080", "http://proxy2.example.com:8080"],
+    max_failures=3,
+    health_check_url="https://httpbin.org/ip",
+    health_check_timeout=10,
+)
+
+for proxy, ok in rotator.health_check().items():
+    print(proxy, "OK" if ok else "DEAD")
+```
+
+A proxy that fails `max_failures` times in a row leaves the pool.
+
+### httpx and aiohttp
+
+The rotator just hands out URLs, so it works with any client:
 
 ```python
 import httpx
-from proxy_rotator import ProxyRotator
-
-rotator = ProxyRotator([
-    "http://proxy1.example.com:8080",
-    "http://proxy2.example.com:8080",
-])
-
-for url in urls_to_scrape:
-    proxy = rotator.get_next()
-    with httpx.Client(proxy=proxy) as client:
-        response = client.get(url)
-        print(response.text)
+with httpx.Client(proxy=rotator.get_next()) as client:
+    client.get("https://httpbin.org/ip")
 ```
-
-### Async Usage with aiohttp
 
 ```python
-import aiohttp
-import asyncio
-from proxy_rotator import ProxyRotator
-
-rotator = ProxyRotator([
-    "http://proxy1.example.com:8080",
-    "http://proxy2.example.com:8080",
-])
-
-async def fetch(url):
-    proxy = rotator.get_next()
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, proxy=proxy) as response:
-            return await response.text()
-
-async def main():
-    urls = ["https://httpbin.org/ip"] * 5
-    tasks = [fetch(url) for url in urls]
-    results = await asyncio.gather(*tasks)
-    for r in results:
-        print(r)
-
-asyncio.run(main())
+async with aiohttp.ClientSession() as s:
+    async with s.get("https://httpbin.org/ip", proxy=rotator.get_next()) as r:
+        print(await r.text())
 ```
 
-### Health Checking
+See [`examples/`](examples/) for longer versions.
 
-Run a health check to test all proxies and remove unresponsive ones:
+## API reference
 
-```python
-from proxy_rotator import ProxyRotator
+### `MobileProxy(proxy_url, rotate_url, ...)`
 
-rotator = ProxyRotator(
-    proxies=["http://proxy1.example.com:8080", "http://proxy2.example.com:8080"],
-    max_failures=3,          # remove proxy after 3 consecutive failures
-    health_check_url="https://httpbin.org/ip",
-    health_check_timeout=10, # seconds
-)
+| Argument / method | Default | What it does |
+|---|---|---|
+| `min_interval` | `0` | Seconds to leave between rotations |
+| `ip_check_url` | `https://api.ipify.org` | Plain-text IP echo used to confirm a change |
+| `request_timeout` | `30` | Per-request timeout, seconds |
+| `proxies` | | `requests`-style dict for the endpoint |
+| `current_ip()` | | Exit IP right now |
+| `rotate(wait_for_new_ip=True, timeout=90, poll_every=3, honour_cooldown=True)` | | Rotate and return a `RotationResult` |
+| `seconds_until_allowed()` | | Time left on the local cooldown |
 
-# Test all proxies (runs in parallel using threads)
-results = rotator.health_check()
-for proxy_url, is_healthy in results.items():
-    status = "OK" if is_healthy else "DEAD"
-    print(f"  {proxy_url}: {status}")
+### `ProxyRotator(proxies, max_failures=5, health_check_url=..., health_check_timeout=10)`
 
-print(f"Healthy proxies remaining: {rotator.active_count}")
+| Method | What it does |
+|---|---|
+| `get_next()` | Next proxy, round-robin |
+| `get_random()` | Random proxy |
+| `get_dict(proxy=None)` | `requests`-style dict |
+| `add_proxy(url)` / `remove_proxy(url)` | Change the pool |
+| `report_failure(url)` / `report_success(url)` | Update the failure counter |
+| `health_check(max_workers=10)` | Test every proxy in parallel |
+| `from_file(path)` | Build from a text file |
+| `active_count` | Proxies left in the pool |
+
+### `RotatingSession(proxies, max_retries=3, backoff_factor=0.3, max_failures=5, rotator=None)`
+
+A `requests.Session`. Also has `add_proxy`, `remove_proxy`, `health_check` and `active_proxy_count`.
+
+Supported URL schemes: `http`, `https`, `socks5`, `socks5h`.
+
+## Tests
+
+```bash
+pip install -e . pytest
+pytest
 ```
 
-### Loading Proxies from a File
+## Where to get proxies
 
-```python
-from proxy_rotator import ProxyRotator
-
-rotator = ProxyRotator.from_file("proxies.txt")
-# proxies.txt should contain one proxy URL per line
-```
-
-### Thread-Safe Concurrent Usage
-
-```python
-from concurrent.futures import ThreadPoolExecutor
-from proxy_rotator import RotatingSession
-
-session = RotatingSession(
-    proxies=["http://proxy1.example.com:8080", "http://proxy2.example.com:8080"],
-    max_retries=2,
-)
-
-def fetch(url):
-    return session.get(url).text
-
-with ThreadPoolExecutor(max_workers=10) as pool:
-    urls = ["https://httpbin.org/ip"] * 20
-    results = list(pool.map(fetch, urls))
-```
-
-## Configuration
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `proxies` | `[]` | List of proxy URLs |
-| `max_failures` | `5` | Consecutive failures before a proxy is removed |
-| `health_check_url` | `https://httpbin.org/ip` | URL used for health checks |
-| `health_check_timeout` | `10` | Timeout in seconds for health check requests |
-
-## Proxy URL Formats
-
-```
-http://host:port
-http://username:password@host:port
-https://host:port
-socks5://host:port
-socks5://username:password@host:port
-```
-
-## API Reference
-
-### `ProxyRotator`
-
-| Method | Description |
-|--------|-------------|
-| `get_next()` | Return the next proxy (round-robin) |
-| `get_random()` | Return a random proxy |
-| `add_proxy(url)` | Add a proxy to the pool |
-| `remove_proxy(url)` | Remove a proxy from the pool |
-| `report_failure(url)` | Record a failure; removes proxy after `max_failures` |
-| `report_success(url)` | Reset a proxy's failure counter |
-| `health_check()` | Test all proxies and return results dict |
-| `active_count` | Number of currently active proxies |
-| `from_file(path)` | Class method to load proxies from a text file |
-
-### `RotatingSession`
-
-Extends `requests.Session` with automatic proxy rotation.
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `proxies` | required | List of proxy URLs |
-| `max_retries` | `3` | Max retries per request |
-| `backoff_factor` | `0.3` | Exponential backoff multiplier |
-| `max_failures` | `5` | Failures before proxy removal |
-
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+I run [Singapore Mobile Proxy](https://singaporemobileproxy.com/?utm_source=github&utm_medium=repo&utm_campaign=proxy_rotator): dedicated 4G lines on Singtel and M1, one customer per line, from $40 a month, with a 24-hour free trial. It only does Singapore. For comparisons of other providers, [DataResearchTools](https://dataresearchtools.com/?utm_source=github&utm_medium=repo&utm_campaign=proxy_rotator) (also mine) has reviews and scraping guides.
 
 ## License
 
-This project is licensed under the MIT License -- see the [LICENSE](LICENSE) file for details.
-
-## Recommended Proxy Providers
-
-If you need reliable proxies for your scraping projects, here are some recommendations:
-
-- For proxy comparison tools, reviews, and scraping guides, visit [DataResearchTools.com](https://dataresearchtools.com)
+MIT. See [LICENSE](LICENSE).

@@ -5,12 +5,11 @@ long_description = Path("README.md").read_text(encoding="utf-8")
 
 setup(
     name="proxy-rotator",
-    version="1.0.0",
-    author="proxy-rotator contributors",
+    version="1.1.0",
+    author="Xavier Fok",
     description=(
-        "Lightweight Python library for rotating proxies in web scraping projects. "
-        "Supports HTTP/HTTPS/SOCKS5 with automatic rotation, health checking, "
-        "and retry logic."
+        "Rotate proxies in Python scrapers: round-robin pools with health checks "
+        "and retries, plus mobile proxies that change IP through a rotation link."
     ),
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -21,7 +20,7 @@ setup(
         "Proxy Tools & Guides": "https://dataresearchtools.com",
     },
     packages=find_packages(exclude=["examples", "tests"]),
-    python_requires=">=3.7",
+    python_requires=">=3.9",
     install_requires=[
         "requests>=2.20.0",
     ],
@@ -36,19 +35,18 @@ setup(
         ],
     },
     classifiers=[
-        "Development Status :: 5 - Production/Stable",
+        "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Topic :: Internet :: WWW/HTTP",
         "Topic :: Software Development :: Libraries :: Python Modules",
     ],
-    keywords="proxy rotation scraping web-scraping requests socks5 rotating-proxy",
+    keywords="proxy rotation scraping web-scraping requests socks5 rotating-proxy mobile-proxy 4g-proxy",
 )
