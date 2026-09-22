@@ -7,6 +7,7 @@ setup(
     name="proxy-rotator",
     version="1.1.0",
     author="Xavier Fok",
+    license="MIT",
     description=(
         "Rotate proxies in Python scrapers: round-robin pools with health checks "
         "and retries, plus mobile proxies that change IP through a rotation link."
@@ -37,7 +38,6 @@ setup(
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.9",
